@@ -1,0 +1,11 @@
+# Runtime dependency lock for the FastAPI ML services. Test dependencies are
+# intentionally isolated in requirements-dev.txt.
+pandas==2.3.3
+scikit-learn==1.9.0
+xgboost==3.3.0
+joblib==1.5.3
+fastapi==0.141.1
+pydantic==2.13.4
+uvicorn==0.52.1
+requests==2.34.2
+mlflow==3.15.0
