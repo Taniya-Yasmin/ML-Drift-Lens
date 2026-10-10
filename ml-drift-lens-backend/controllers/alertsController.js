@@ -1,5 +1,6 @@
 const pool = require("../db");
 const { body, validationResult } = require("express-validator");
+const { parsePagination } = require("../utils/pagination");
 
 exports.validateAlert = [
   body("drift_score_id")
@@ -12,12 +13,18 @@ exports.validateAlert = [
 
 exports.getAllAlerts = async (req, res) => {
   try {
+    const { limit, offset } = parsePagination(req.query || {});
     const result = await pool.query(
-      "SELECT * FROM alerts ORDER BY timestamp DESC LIMIT 50",
+      `SELECT id, model_id, message, status, timestamp, drift_score_id
+       FROM alerts ORDER BY timestamp DESC LIMIT $1 OFFSET $2`,
+      [limit, offset],
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    if (err.message.includes("limit must") || err.message.includes("offset must")) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    res.status(500).json({ success: false, error: "Failed to retrieve alerts" });
   }
 };
 

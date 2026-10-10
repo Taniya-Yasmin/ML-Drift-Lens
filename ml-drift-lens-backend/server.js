@@ -1,11 +1,13 @@
 const express = require("express");
 const cors = require("cors");
 const pool = require("./db");
+const { createCorsOptions } = require("./utils/cors");
 
 const app = express();
-const PORT = 3000;
+const PORT = process.env.PORT || 3000;
+const HOST = process.env.HOST || "127.0.0.1";
 
-app.use(cors());
+app.use(cors(createCorsOptions()));
 app.use(express.json());
 
 app.get("/", (req, res) => {
@@ -20,6 +22,13 @@ app.get("/test-db", async (req, res) => {
     res.status(500).json({ success: false, error: err.message });
   }
 });
+
+const metricsController = require("./controllers/metricsController");
+app.get("/api/metrics", metricsController.getMetrics);
+
+// Health and ML Service integration routes
+const healthRoutes = require("./routes/healthRoutes");
+app.use("/api", healthRoutes);
 
 const predictionsRoutes = require("./routes/predictionsRoutes");
 app.use("/api/predictions", predictionsRoutes);
@@ -36,6 +45,23 @@ app.use("/api/models", modelsRoutes);
 const retrainingRoutes = require("./routes/retrainingRoutes");
 app.use("/api/retraining", retrainingRoutes);
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
+const { consumeDriftEventsOnce } = require("./services/alertingConsumer");
+const { ensureActiveModelVersion } = require("./services/modelVersionBootstrap");
+const consumerInterval = setInterval(() => {
+  consumeDriftEventsOnce().catch((error) => {
+    console.error("Drift event consumer failed", { error: error.message });
+  });
+}, 1000);
+consumerInterval.unref();
+
+async function startServer() {
+  await ensureActiveModelVersion();
+  app.listen(PORT, HOST, () => {
+    console.log(`Server running on http://${HOST}:${PORT}`);
+  });
+}
+
+startServer().catch((error) => {
+  console.error("Backend startup failed", { error: error.message });
+  process.exitCode = 1;
 });

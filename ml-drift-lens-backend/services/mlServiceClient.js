@@ -1,0 +1,240 @@
+/**
+ * ML Service Client
+ * Communicates with the Python FastAPI inference service
+ * Handles model predictions, health checks, and model information
+ */
+
+const http = require("http");
+
+const DEFAULT_ML_SERVICE_URL = "http://localhost:8000";
+
+function getMLServiceURL() {
+  return (process.env.ML_SERVICE_URL || DEFAULT_ML_SERVICE_URL).trim();
+}
+
+function getMLServiceTimeout() {
+  return Number.parseInt(process.env.ML_SERVICE_TIMEOUT || "5000", 10);
+}
+
+function buildServiceURLCandidates() {
+  const configuredUrl = getMLServiceURL();
+  const target = new URL(configuredUrl);
+  const candidates = [configuredUrl];
+
+  if (target.hostname === "127.0.0.1") {
+    candidates.push(`http://localhost:${target.port || 8000}`);
+  } else if (target.hostname === "localhost") {
+    candidates.push(`http://127.0.0.1:${target.port || 8000}`);
+  }
+
+  return [...new Set(candidates)];
+}
+
+/**
+ * Parse ML service URL into host and port
+ */
+function parseMLServiceURL(urlString = getMLServiceURL()) {
+  const url = new URL(urlString);
+  return {
+    hostname: url.hostname,
+    port: url.port || (url.protocol === "https:" ? 443 : 80),
+    protocol: url.protocol,
+  };
+}
+
+/**
+ * Make HTTP request to ML service
+ * @param {string} method - HTTP method (GET, POST)
+ * @param {string} path - URL path (e.g., /predict, /health)
+ * @param {object} data - Request body (for POST)
+ * @returns {Promise<object>} Parsed response body
+ */
+function makeMLServiceRequest(method, path, data = null) {
+  return new Promise((resolve, reject) => {
+    const candidateUrls = buildServiceURLCandidates();
+    let lastError = null;
+
+    const attempt = (candidateUrlIndex) => {
+      const urlString = candidateUrls[candidateUrlIndex];
+      const options = parseMLServiceURL(urlString);
+      options.method = method;
+      options.path = path;
+      options.headers = {
+        "Content-Type": "application/json",
+      };
+
+      const req = http.request(options, (res) => {
+        let responseBody = "";
+
+        res.on("data", (chunk) => {
+          responseBody += chunk;
+        });
+
+        res.on("end", () => {
+          try {
+            const parsedBody = JSON.parse(responseBody);
+
+            if (res.statusCode >= 400) {
+              reject({
+                statusCode: res.statusCode,
+                message: parsedBody?.detail || "ML Service Error",
+                error: parsedBody,
+              });
+            } else {
+              resolve(parsedBody);
+            }
+          } catch (parseError) {
+            reject({
+              statusCode: res.statusCode,
+              message: "Failed to parse ML service response",
+              error: parseError.message,
+            });
+          }
+        });
+      });
+
+      req.setTimeout(getMLServiceTimeout(), () => {
+        req.destroy();
+        const timeoutError = {
+          statusCode: 503,
+          message: `ML Service request timeout for ${urlString}`,
+          error: "Service request exceeded timeout",
+        };
+
+        if (candidateUrlIndex < candidateUrls.length - 1) {
+          lastError = timeoutError;
+          attempt(candidateUrlIndex + 1);
+          return;
+        }
+
+        reject(timeoutError);
+      });
+
+      req.on("error", (error) => {
+        const connectionError = {
+          statusCode: 503,
+          message: `ML Service connection failed for ${urlString}`,
+          error: error.message,
+        };
+
+        if (candidateUrlIndex < candidateUrls.length - 1) {
+          lastError = connectionError;
+          attempt(candidateUrlIndex + 1);
+          return;
+        }
+
+        reject(connectionError);
+      });
+
+      if (data) {
+        req.write(JSON.stringify(data));
+      }
+
+      req.end();
+    };
+
+    attempt(0);
+  });
+}
+
+/**
+ * Health check - Is the ML service process running?
+ */
+async function checkHealth() {
+  try {
+    const response = await makeMLServiceRequest("GET", "/health");
+    return {
+      healthy: response.status === "healthy",
+      message: response.message,
+    };
+  } catch (error) {
+    return {
+      healthy: false,
+      message: error.message,
+    };
+  }
+}
+
+/**
+ * Readiness check - Is the model loaded and ready?
+ */
+async function checkReady() {
+  try {
+    const response = await makeMLServiceRequest("GET", "/ready");
+    return {
+      ready: response.ready,
+      modelLoaded: response.model_loaded,
+      message: response.message,
+    };
+  } catch (error) {
+    return {
+      ready: false,
+      modelLoaded: false,
+      message: error.message,
+    };
+  }
+}
+
+/**
+ * Get model information
+ */
+async function getModelInfo() {
+  try {
+    const response = await makeMLServiceRequest("GET", "/model/info");
+    return response;
+  } catch (error) {
+    throw error;
+  }
+}
+
+/**
+ * Trigger a safe reload of the in-memory model in the FastAPI service.
+ * The reload endpoint accepts a trusted candidate reference and resolves it
+ * internally, instead of accepting arbitrary filesystem paths from the client.
+ * @param {{ model_id: string, model_version: string }} reloadRequest
+ * @returns {Promise<object>} Reload response payload
+ */
+async function reloadModel(reloadRequest) {
+  const payload = {
+    model_id: reloadRequest.model_id,
+    model_version: reloadRequest.model_version,
+  };
+  const response = await makeMLServiceRequest("POST", "/reload", payload);
+
+  if (
+    !response ||
+    response.status !== "success" ||
+    response.active_model_version !== reloadRequest.model_version ||
+    (response.model_id && response.model_id !== reloadRequest.model_id)
+  ) {
+    throw {
+      statusCode: 502,
+      message: "ML Service returned an invalid reload response",
+      error: "Reload response did not confirm the requested active model",
+    };
+  }
+
+  return response;
+}
+
+/**
+ * Execute prediction
+ * @param {object} predictionRequest - Request matching prediction_request.schema.json
+ * @returns {Promise<object>} Response matching prediction_response.schema.json
+ */
+async function predict(predictionRequest) {
+  try {
+    const response = await makeMLServiceRequest("POST", "/predict", predictionRequest);
+    return response;
+  } catch (error) {
+    throw error;
+  }
+}
+
+module.exports = {
+  checkHealth,
+  checkReady,
+  getModelInfo,
+  reloadModel,
+  predict,
+};

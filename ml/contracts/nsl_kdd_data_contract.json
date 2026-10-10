@@ -1,0 +1,100 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "contract_name": "modelwatch-nsl-kdd-binary-classification",
+  "contract_version": "1.0.0",
+  "dataset": {
+    "name": "NSL-KDD",
+    "source": "https://www.unb.ca/cic/datasets/nsl.html",
+    "format": "delimited text without a header row",
+    "expected_files": {
+        "train": "data/raw/nsl-kdd-upstream/KDDTrain+.txt",
+        "test": "data/raw/nsl-kdd-upstream/KDDTest+.txt"
+    },
+    "repository_status": "downloaded_locally_not_committed",
+    "metadata_columns": ["difficulty_level"],
+    "metadata_policy": "exclude_from_model_input"
+  },
+  "task": {
+    "type": "binary_classification",
+    "target_column": "label",
+    "label_normalization": "trim whitespace, lowercase, and remove one trailing period",
+    "label_mapping": {
+      "normal": 0,
+      "any_non_normal_label": 1
+    },
+    "class_names": {
+      "0": "normal",
+      "1": "attack"
+    }
+  },
+  "features": [
+    {"name": "duration", "kind": "numerical"},
+    {"name": "protocol_type", "kind": "categorical"},
+    {"name": "service", "kind": "categorical"},
+    {"name": "flag", "kind": "categorical"},
+    {"name": "src_bytes", "kind": "numerical"},
+    {"name": "dst_bytes", "kind": "numerical"},
+    {"name": "land", "kind": "numerical"},
+    {"name": "wrong_fragment", "kind": "numerical"},
+    {"name": "urgent", "kind": "numerical"},
+    {"name": "hot", "kind": "numerical"},
+    {"name": "num_failed_logins", "kind": "numerical"},
+    {"name": "logged_in", "kind": "numerical"},
+    {"name": "num_compromised", "kind": "numerical"},
+    {"name": "root_shell", "kind": "numerical"},
+    {"name": "su_attempted", "kind": "numerical"},
+    {"name": "num_root", "kind": "numerical"},
+    {"name": "num_file_creations", "kind": "numerical"},
+    {"name": "num_shells", "kind": "numerical"},
+    {"name": "num_access_files", "kind": "numerical"},
+    {"name": "num_outbound_cmds", "kind": "numerical"},
+    {"name": "is_host_login", "kind": "numerical"},
+    {"name": "is_guest_login", "kind": "numerical"},
+    {"name": "count", "kind": "numerical"},
+    {"name": "srv_count", "kind": "numerical"},
+    {"name": "serror_rate", "kind": "numerical"},
+    {"name": "srv_serror_rate", "kind": "numerical"},
+    {"name": "rerror_rate", "kind": "numerical"},
+    {"name": "srv_rerror_rate", "kind": "numerical"},
+    {"name": "same_srv_rate", "kind": "numerical"},
+    {"name": "diff_srv_rate", "kind": "numerical"},
+    {"name": "srv_diff_host_rate", "kind": "numerical"},
+    {"name": "dst_host_count", "kind": "numerical"},
+    {"name": "dst_host_srv_count", "kind": "numerical"},
+    {"name": "dst_host_same_srv_rate", "kind": "numerical"},
+    {"name": "dst_host_diff_srv_rate", "kind": "numerical"},
+    {"name": "dst_host_same_src_port_rate", "kind": "numerical"},
+    {"name": "dst_host_srv_diff_host_rate", "kind": "numerical"},
+    {"name": "dst_host_serror_rate", "kind": "numerical"},
+    {"name": "dst_host_srv_serror_rate", "kind": "numerical"},
+    {"name": "dst_host_rerror_rate", "kind": "numerical"},
+    {"name": "dst_host_srv_rerror_rate", "kind": "numerical"}
+  ],
+  "preprocessing": {
+    "missing_values": "reject unexpected missing values; no imputation is defined in Phase 1",
+    "categorical_encoding": "one-hot encoding, fitted on training data only, with unknown production categories rejected",
+    "numerical_scaling": "not required by this model-agnostic contract; if selected by a future model, fit the scaler on training data only",
+    "fit_scope": "training split only",
+    "version": "preprocessing-v1"
+  },
+  "split": {
+    "train_source": "KDDTrain+.txt",
+    "validation": "stratified split from the training source",
+    "validation_fraction": 0.2,
+    "test_source": "KDDTest+.txt",
+    "test_policy": "keep untouched until final evaluation",
+    "random_seed": 42
+  },
+  "leakage_controls": [
+    "Do not use difficulty_level as a model feature",
+    "Fit encoders and any scaler on training data only",
+    "Do not tune thresholds or hyperparameters on KDDTest+.txt",
+    "Do not use actual production labels as input features",
+    "Persist the feature order with the model artifact"
+  ],
+  "versioning": {
+    "model_version_format": "semver",
+    "preprocessing_version_format": "name-vN",
+    "required_prediction_fields": ["model_version", "preprocessing_version"]
+  }
+}

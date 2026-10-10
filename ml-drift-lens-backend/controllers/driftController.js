@@ -1,5 +1,7 @@
 const pool = require("../db");
 const { body, validationResult } = require("express-validator");
+const { publishDriftEvent } = require("../services/redisStreamPublisher");
+const { parsePagination } = require("../utils/pagination");
 
 exports.validateDriftScore = [
   body("model_id").notEmpty().withMessage("model_id is required"),
@@ -12,27 +14,83 @@ exports.validateDriftScore = [
 exports.getAllDriftScores = async (req, res) => {
   try {
     const result = await pool.query(
-      "SELECT * FROM drift_scores ORDER BY timestamp DESC LIMIT 50",
+      `SELECT id, model_id, metric_type, score, threshold, status, timestamp
+       FROM drift_scores ORDER BY timestamp DESC LIMIT 1`,
+    );
+    res.json(result.rows[0] || null);
+  } catch (err) {
+    res.status(500).json({ success: false, error: "Failed to retrieve latest drift status" });
+  }
+};
+
+exports.getDriftHistory = async (req, res) => {
+  try {
+    const { limit, offset } = parsePagination(req.query || {});
+    const result = await pool.query(
+      `SELECT id, model_id, metric_type, score, threshold, status, timestamp
+       FROM drift_scores ORDER BY timestamp DESC LIMIT $1 OFFSET $2`,
+      [limit, offset],
     );
     res.json(result.rows);
   } catch (err) {
-    res.status(500).json({ success: false, error: err.message });
+    if (err.message.includes("limit must") || err.message.includes("offset must")) {
+      return res.status(400).json({ success: false, error: err.message });
+    }
+    res.status(500).json({ success: false, error: "Failed to retrieve drift history" });
   }
 };
 
 exports.createDriftScore = async (req, res) => {
   const errors = validationResult(req);
-  if (!errors.isEmpty()) {
-    return res.status(400).json({ success: false, errors: errors.array() });
+  const hasMiddlewareErrors = !errors.isEmpty();
+
+  const { model_id, metric_type, score, threshold, status } = req.body || {};
+  const directValidationErrors = [];
+
+  if (!model_id || String(model_id).trim() === "") {
+    directValidationErrors.push({ path: "model_id", msg: "model_id is required" });
   }
-  const { model_id, metric_type, score, threshold, status } = req.body;
+  if (!metric_type || String(metric_type).trim() === "") {
+    directValidationErrors.push({ path: "metric_type", msg: "metric_type is required" });
+  }
+  if (score === undefined || score === null || Number.isNaN(Number(score)) || Number(score) < 0) {
+    directValidationErrors.push({ path: "score", msg: "score must be a number" });
+  }
+  if (threshold === undefined || threshold === null || Number.isNaN(Number(threshold)) || Number(threshold) < 0) {
+    directValidationErrors.push({ path: "threshold", msg: "threshold must be a number" });
+  }
+  if (!status || String(status).trim() === "") {
+    directValidationErrors.push({ path: "status", msg: "status is required" });
+  }
+
+  if (hasMiddlewareErrors || directValidationErrors.length > 0) {
+    const allErrors = hasMiddlewareErrors ? errors.array() : [];
+    return res.status(400).json({
+      success: false,
+      errors: [...allErrors, ...directValidationErrors],
+    });
+  }
+
   try {
     const result = await pool.query(
       `INSERT INTO drift_scores (model_id, metric_type, score, threshold, status)
        VALUES ($1, $2, $3, $4, $5) RETURNING *`,
-      [model_id, metric_type, score, threshold, status],
+      [model_id, metric_type, Number(score), Number(threshold), status],
     );
-    res.status(201).json(result.rows[0]);
+
+    const persistedRow = result.rows[0];
+    try {
+      const publishResult = await publishDriftEvent(persistedRow);
+      if (publishResult.published) {
+        console.log(
+          `Redis drift event published: ${publishResult.stream_name}/${publishResult.event_type}`,
+        );
+      }
+    } catch (eventError) {
+      console.warn("Redis drift event publish failed:", eventError.message);
+    }
+
+    res.status(201).json(persistedRow);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }
@@ -51,7 +109,19 @@ exports.updateDriftScore = async (req, res) => {
         .status(404)
         .json({ success: false, error: "Drift score not found" });
     }
-    res.json(result.rows[0]);
+    const updatedRow = result.rows[0];
+    try {
+      const publishResult = await publishDriftEvent(updatedRow);
+      if (publishResult.published) {
+        console.log(
+          `Redis drift event published: ${publishResult.stream_name}/${publishResult.event_type}`,
+        );
+      }
+    } catch (eventError) {
+      console.warn("Redis drift event publish failed:", eventError.message);
+    }
+
+    res.json(updatedRow);
   } catch (err) {
     res.status(500).json({ success: false, error: err.message });
   }

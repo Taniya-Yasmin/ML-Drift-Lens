@@ -1,0 +1,177 @@
+name: ml-drift-lens-compose
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ml_drift_lens}
+      POSTGRES_USER: ${POSTGRES_USER:-postgres}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./ml-drift-lens-backend/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${POSTGRES_PORT:-25432}:5432"
+    restart: unless-stopped
+
+  redis:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${REDIS_PORT:-26380}:6379"
+    restart: unless-stopped
+
+  mlflow:
+    build:
+      context: .
+      dockerfile: ml/Dockerfile.mlflow
+    command:
+      - mlflow
+      - server
+      - --host
+      - 0.0.0.0
+      - --port
+      - "5000"
+      - --backend-store-uri
+      - sqlite:////mlflow/mlflow.db
+      - --serve-artifacts
+      - --artifacts-destination
+      - /mlflow/artifacts
+      - --default-artifact-root
+      - mlflow-artifacts:/
+    volumes:
+      - mlflow_data:/mlflow
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:5000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${MLFLOW_PORT:-25000}:5000"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "1000:1000"
+    restart: unless-stopped
+
+  inference:
+    build:
+      context: .
+      dockerfile: ml/Dockerfile
+    command: ["python", "-m", "ml.inference.main", "--host", "0.0.0.0", "--port", "8000", "--model-path", "/app/ml/artifacts/model.joblib"]
+    environment:
+      INFERENCE_HOST: 0.0.0.0
+      INFERENCE_PORT: 8000
+      MODEL_ARTIFACT_PATH: /app/ml/artifacts/model.joblib
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_REGISTERED_MODEL_NAME: ${MLFLOW_REGISTERED_MODEL_NAME:-ModelWatch-IDS-Baseline}
+    volumes:
+      - model_artifacts:/app/ml/artifacts:ro
+    depends_on:
+      mlflow:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 18
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${INFERENCE_PORT:-28000}:8000"
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: .
+      dockerfile: ml-drift-lens-backend/Dockerfile
+    environment:
+      HOST: 0.0.0.0
+      PORT: 3000
+      DB_USER: ${POSTGRES_USER:-postgres}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in the environment}
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: ${POSTGRES_DB:-ml_drift_lens}
+      REDIS_URL: redis://redis:6379
+      ML_SERVICE_URL: http://inference:8000
+      ML_SERVICE_TIMEOUT: ${ML_SERVICE_TIMEOUT:-15000}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_EXPERIMENT_NAME: ${MLFLOW_EXPERIMENT_NAME:-ModelWatch-IDS-Docker}
+      MLFLOW_REGISTERED_MODEL_NAME: ${MLFLOW_REGISTERED_MODEL_NAME:-ModelWatch-IDS-Baseline}
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:25173,http://127.0.0.1:25173}
+    volumes:
+      - model_artifacts:/app/ml/artifacts
+      - ./ml/data/raw:/app/ml/data/raw:ro
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      inference:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://127.0.0.1:3000/api/health', response => process.exit(response.statusCode === 200 ? 0 : 1)).on('error', () => process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 18
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${BACKEND_PORT:-23000}:3000"
+    user: "1000:1000"
+    read_only: true
+    tmpfs:
+      - /tmp
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: ml-drift-lens-frontend/Dockerfile
+    depends_on:
+      backend:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "--quiet", "http://127.0.0.1:8080/"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    ports:
+      - "${HOST_BIND_ADDRESS:-127.0.0.1}:${FRONTEND_PORT:-25173}:8080"
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    user: "101:101"
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
+  mlflow_data:
+  model_artifacts:

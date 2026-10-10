@@ -3,6 +3,7 @@ const router = express.Router();
 const driftController = require("../controllers/driftController");
 
 router.get("/", driftController.getAllDriftScores);
+router.get("/history", driftController.getDriftHistory);
 router.post(
   "/",
   driftController.validateDriftScore,

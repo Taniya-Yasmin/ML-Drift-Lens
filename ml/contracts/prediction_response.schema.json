@@ -1,0 +1,18 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "modelwatch/prediction-response.schema.json",
+  "title": "ModelWatch prediction response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["model_id", "model_version", "preprocessing_version", "prediction", "confidence"],
+  "properties": {
+    "model_id": {"type": "string", "minLength": 1},
+    "model_version": {"type": "string", "minLength": 1},
+    "preprocessing_version": {"type": "string", "minLength": 1},
+    "request_id": {"type": "string", "minLength": 1},
+    "prediction": {"type": "string", "enum": ["normal", "attack"]},
+    "prediction_class": {"type": "integer", "enum": [0, 1]},
+    "confidence": {"type": "number", "minimum": 0, "maximum": 1},
+    "timestamp": {"type": "string", "format": "date-time"}
+  }
+}

@@ -6,6 +6,13 @@ __pycache__/
 venv/
 .env
 
+# Model artifacts and metadata
+ml/artifacts/
+ml/data/raw/
+*.joblib
+*.pkl
+*.pickle
+
 # MLflow
 mlruns/
 mlartifacts/
@@ -81,6 +88,7 @@ web_modules/
 .env
 .env.*
 !.env.example
+docker.env
 
 # parcel-bundler cache (https://parceljs.org/)
 .cache
