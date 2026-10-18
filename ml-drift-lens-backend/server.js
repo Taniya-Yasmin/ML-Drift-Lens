@@ -5,7 +5,7 @@ const { createCorsOptions } = require("./utils/cors");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const HOST = process.env.HOST || "127.0.0.1";
+const HOST = process.env.HOST || "0.0.0.0";
 
 app.use(cors(createCorsOptions()));
 app.use(express.json());
