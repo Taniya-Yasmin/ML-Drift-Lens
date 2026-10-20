@@ -31,9 +31,10 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 BASELINE_PATH = os.path.join(BASE_DIR, "data", "baseline.csv")
 ENCODERS_PATH = os.path.join(BASE_DIR, "models", "encoders.pkl")
 
-PREDICTIONS_API = "http://localhost:3000/api/predictions"
-DRIFT_API = "http://localhost:3000/api/drift"
-ALERTS_API = "http://localhost:3000/api/alerts"
+_EXPRESS_API_URL = os.getenv("EXPRESS_API_URL", "http://localhost:3000/api").rstrip("/")
+PREDICTIONS_API = f"{_EXPRESS_API_URL}/predictions"
+DRIFT_API = f"{_EXPRESS_API_URL}/drift"
+ALERTS_API = f"{_EXPRESS_API_URL}/alerts"
 
 # Load baseline + encoders once at startup
 baseline_df = pd.read_csv(BASELINE_PATH)

@@ -7,5 +7,4 @@ venv313
 tests
 mlruns
 mlflow.db
-data
 requirements-dev.txt

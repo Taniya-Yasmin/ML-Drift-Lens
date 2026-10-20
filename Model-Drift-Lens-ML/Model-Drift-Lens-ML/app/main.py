@@ -70,7 +70,7 @@ FEATURE_ORDER = [
 
 CAT_COLS = ["protocol_type", "service", "flag"]
 
-BACKEND_URL = "http://localhost:3000/api/predictions"
+BACKEND_URL = os.getenv("EXPRESS_API_URL", "http://localhost:3000/api").rstrip("/") + "/predictions"
 MODEL_ID = "model_v1"
 
 

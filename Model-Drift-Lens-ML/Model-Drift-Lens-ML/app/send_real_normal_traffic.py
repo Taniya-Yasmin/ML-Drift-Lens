@@ -3,7 +3,7 @@ import requests
 import os
 
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-PREDICT_URL = "http://127.0.0.1:8000/predict"
+PREDICT_URL = os.getenv("PREDICT_URL", "http://127.0.0.1:8000/predict")
 
 column_names = [
     "duration", "protocol_type", "service", "flag", "src_bytes",

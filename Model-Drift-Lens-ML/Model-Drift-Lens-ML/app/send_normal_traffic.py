@@ -1,7 +1,8 @@
+import os
 import requests
 import random
 
-PREDICT_URL = "http://127.0.0.1:8000/predict"
+PREDICT_URL = os.getenv("PREDICT_URL", "http://127.0.0.1:8000/predict")
 
 normal_sample = {
     "duration": 0, "protocol_type": "tcp", "service": "http", "flag": "SF",

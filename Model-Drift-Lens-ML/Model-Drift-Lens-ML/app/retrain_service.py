@@ -32,8 +32,9 @@ ENCODERS_PATH = os.path.join(BASE_DIR, "models", "encoders.pkl")
 TRAIN_DATA_PATH = os.path.join(BASE_DIR, "data", "KDDTrain+.txt")
 TEST_DATA_PATH = os.path.join(BASE_DIR, "data", "KDDTest+.txt")
 
-MODELS_API = "http://localhost:3000/api/models"
-RETRAINING_API = "http://localhost:3000/api/retraining"
+_EXPRESS_API_URL = os.getenv("EXPRESS_API_URL", "http://localhost:3000/api").rstrip("/")
+MODELS_API = f"{_EXPRESS_API_URL}/models"
+RETRAINING_API = f"{_EXPRESS_API_URL}/retraining"
 
 MODEL_ID = "model_v1"
 MODEL_REGISTRY_NAME = "intrusion-detection-model"
@@ -58,6 +59,12 @@ COLUMN_NAMES = [
     "label", "difficulty_level"
 ]
 CAT_COLS = ["protocol_type", "service", "flag"]
+
+# Compose/Railway inject MLFLOW_TRACKING_URI. If unset, MLflow keeps its
+# local file store so importing this module in tests does not need a server.
+_mlflow_tracking_uri = os.getenv("MLFLOW_TRACKING_URI")
+if _mlflow_tracking_uri:
+    mlflow.set_tracking_uri(_mlflow_tracking_uri)
 
 mlflow.set_experiment("intrusion-detection")
 

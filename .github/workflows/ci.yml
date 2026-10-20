@@ -1,0 +1,151 @@
+name: CI
+
+# Triggers: every push to main/master/develop and every PR targeting them.
+on:
+  push:
+    branches: [main, master, develop]
+  pull_request:
+    branches: [main, master, develop]
+
+# Cancel any in-flight run for the same branch/PR on new commits.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Job 1: Pytest for all three FastAPI ML services
+  # All HTTP calls to Express/MLflow are monkeypatched -- no live services needed.
+  # ---------------------------------------------------------------------------
+  ml-pytest:
+    name: "ML | Pytest"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Model-Drift-Lens-ML/Model-Drift-Lens-ML
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python 3.13
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: pip-${{ runner.os }}-py3.13-${{ hashFiles('Model-Drift-Lens-ML/Model-Drift-Lens-ML/requirements.lock', 'Model-Drift-Lens-ML/Model-Drift-Lens-ML/requirements-dev.txt') }}
+          restore-keys: pip-${{ runner.os }}-py3.13-
+
+      - name: Install runtime dependencies
+        run: pip install -r requirements.lock
+
+      - name: Install dev dependencies
+        run: pip install -r requirements-dev.txt
+
+      # model_v1.pkl + encoders.pkl are committed under models/ and are loaded
+      # by test_inference_api.py via TestClient(main.app).
+      - name: Run Pytest
+        run: pytest tests/ -v --tb=short --no-header
+        env:
+          EXPRESS_API_URL: http://localhost:3000/api
+          MLFLOW_TRACKING_URI: "sqlite:///ci_mlflow.db"
+
+  # ---------------------------------------------------------------------------
+  # Job 2: Frontend -- npm ci + Vite build
+  # Catches broken imports, missing deps, and JSX errors.
+  # ---------------------------------------------------------------------------
+  frontend-build:
+    name: "Frontend | Build"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ml-drift-lens-frontend/ml-drift-lens-frontend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ml-drift-lens-frontend/ml-drift-lens-frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build (Vite)
+        run: npm run build
+
+  # ---------------------------------------------------------------------------
+  # Job 3: Backend -- npm ci + node --check syntax validation
+  # No Jest tests yet (added in Task 8); this guards against broken requires.
+  # ---------------------------------------------------------------------------
+  backend-check:
+    name: "Backend | Checks"
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ml-drift-lens-backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: ml-drift-lens-backend/package-lock.json
+
+      - name: Install production dependencies
+        run: npm ci --omit=dev
+
+      - name: Syntax check -- server.js
+        run: node --check server.js
+
+      - name: Syntax check -- controllers
+        run: for f in controllers/*.js; do echo "Checking $f"; node --check "$f"; done
+
+      - name: Syntax check -- routes
+        run: for f in routes/*.js; do echo "Checking $f"; node --check "$f"; done
+
+  # ---------------------------------------------------------------------------
+  # Job 4: Docker Compose build (PR only)
+  # Verifies that every Dockerfile builds successfully. Does not push images.
+  # Runs after the other three pass so build minutes are not wasted on broken code.
+  # ---------------------------------------------------------------------------
+  docker-build:
+    name: "Docker | Compose Build"
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    needs: [ml-pytest, frontend-build, backend-check]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Cache Docker layers
+        uses: actions/cache@v4
+        with:
+          path: /tmp/.buildx-cache
+          key: docker-${{ runner.os }}-${{ github.sha }}
+          restore-keys: docker-${{ runner.os }}-
+
+      # docker compose requires POSTGRES_PASSWORD to be set (not optional).
+      - name: Create minimal .env for compose
+        run: |
+          echo "POSTGRES_USER=postgres"    >> .env
+          echo "POSTGRES_PASSWORD=ci_only" >> .env
+          echo "POSTGRES_DB=ml_drift_lens" >> .env
+
+      - name: Build all services
+        run: docker compose build
+        env:
+          COMPOSE_DOCKER_CLI_BUILD: 1
+          DOCKER_BUILDKIT: 1
